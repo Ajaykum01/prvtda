@@ -13,12 +13,12 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # ---------- YOUR CREDENTIALS (keep safe) ----------
 EMAIL = "latoh66921@aratrin.com"
 PASSWORD = "Ajaykumar@28"
-BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"          # <-- replace
-ALLOWED_USER_ID = 2117119246                # <-- your Telegram user ID (optional security)
+BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"
+ALLOWED_USER_ID = 2117119246
 
 logging.basicConfig(level=logging.INFO)
 
-# ---------- YOUR ORIGINAL FUNCTIONS (unchanged) ----------
+# ---------- HEADER FUNCTIONS ----------
 def h1():
     return {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36',
@@ -125,7 +125,7 @@ def bt_h(fp):
     }
 
 def login():
-    """Fixed login function with better error detection"""
+    """Improved login with strict validation"""
     try:
         s = requests.Session()
         r = s.get('https://livresq.com/en/my-account/', headers=h1())
@@ -136,7 +136,7 @@ def login():
             print("❌ LOGIN ERROR: Could not extract login nonce")
             return None
         
-        print("✅ Login Nonce found:", n.group(1))
+        print("✅ Login Nonce found")
         
         d = {
             'username': EMAIL,
@@ -150,26 +150,36 @@ def login():
         r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d)
         print(f"Response Status: {r.status_code}")
         
-        # Check for error messages
+        # Check for explicit error messages (most reliable)
         if 'woocommerce-error' in r.text:
             print("❌ LOGIN ERROR: WooCommerce error detected")
             error_match = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
             if error_match:
-                error_msg = error_match.group(1).strip()
+                error_msg = re.sub(r'<[^>]+>', '', error_match.group(1).strip())
                 print(f"Error message: {error_msg}")
             return None
         
-        # Check for success indicators (multiple variations)
-        response_lower = r.text.lower()
-        success_keywords = ['logout', 'log out', 'dashboard', 'profile', 'my account', 'welcome']
-        
-        if any(keyword in response_lower for keyword in success_keywords):
-            print("✅ LOGIN SUCCESSFUL!")
+        # Check if session was created (better indicator)
+        # Check for logout button in proper context
+        logout_pattern = r'<a[^>]*href="[^"]*logout[^"]*"[^>]*>.*?Log\s*Out|Logout'
+        if re.search(logout_pattern, r.text, re.IGNORECASE):
+            print("✅ LOGIN SUCCESSFUL - Logout button found!")
             return s
-        else:
-            print("❌ LOGIN ERROR: No success indicators found")
-            print("Response snippet:", r.text[:500])
+        
+        # Check for redirect to login page (indicates failed login)
+        if 'woocommerce-login-nonce' in r.text and r.url != 'https://livresq.com/en/my-account/':
+            print("❌ LOGIN ERROR: Redirected back to login page")
             return None
+        
+        # Check if we got the account page (check for account-specific elements)
+        if 'woocommerce-MyAccount-navigation' in r.text or 'customer-logout' in r.text:
+            print("✅ LOGIN SUCCESSFUL - Account page detected!")
+            return s
+        
+        print("❌ LOGIN ERROR: Could not verify login status")
+        print("Response status code:", r.status_code)
+        print("Response URL:", r.url)
+        return None
             
     except Exception as e:
         print(f"❌ LOGIN ERROR: {str(e)}")
@@ -182,16 +192,23 @@ def get_nonces(s):
         
         # Extract add payment method nonce
         an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
-        print("✅ Add Nonce found" if an else "❌ Add Nonce NOT FOUND")
+        if an:
+            print("✅ Add Nonce found")
+        else:
+            print("❌ Add Nonce NOT FOUND")
         
         # Extract client token nonce
         cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
         if not cn:
             cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
         
-        print("✅ Client Nonce found" if cn else "❌ Client Nonce NOT FOUND")
+        if cn:
+            print("✅ Client Nonce found")
+        else:
+            print("❌ Client Nonce NOT FOUND")
         
         if not an or not cn:
+            print("DEBUG: Could not extract both nonces, response length:", len(r.text))
             return None, None
         
         return an.group(1), cn.group(1)
@@ -214,6 +231,11 @@ def get_fp(s, cn):
             return None
         
         j = r.json()
+        if 'data' not in j:
+            print("❌ ERROR: No 'data' field in response")
+            print("Response:", j)
+            return None
+        
         dt = base64.b64decode(j['data']).decode('utf-8')
         fp = json.loads(dt).get('authorizationFingerprint')
         
@@ -290,7 +312,7 @@ def add_pm(s, pt, an):
             
             # Rate limiting check
             if 'You cannot add a new payment method so soon' in r.text:
-                print(f"⏱️  Rate limited, waiting 15s (attempt {attempt + 1}/4)")
+                print(f"⏱️ Rate limited, waiting 15s (attempt {attempt + 1}/4)")
                 time.sleep(15)
                 continue
             
