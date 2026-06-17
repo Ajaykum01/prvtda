@@ -11,8 +11,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # ---------- YOUR CREDENTIALS (keep safe) ----------
-EMAIL = "00t0a9@givememail.club"
-PASSWORD = "Lundka143"
+EMAIL = "latoh66921@aratrin.com"
+PASSWORD = "Ajaykumar@28"
 BOT_TOKEN = "5911518066:AAFWseC5PHYAsbqT576YkLqg_yPll2lpeoQ"          # <-- replace
 ALLOWED_USER_ID = 2117119246                # <-- your Telegram user ID (optional security)
 
