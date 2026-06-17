@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # ---------- YOUR CREDENTIALS (keep safe) ----------
 EMAIL = "latoh66921@aratrin.com"
 PASSWORD = "Ajaykumar@28"
-BOT_TOKEN = "5911518066:AAFWseC5PHYAsbqT576YkLqg_yPll2lpeoQ"          # <-- replace
+BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"          # <-- replace
 ALLOWED_USER_ID = 2117119246                # <-- your Telegram user ID (optional security)
 
 logging.basicConfig(level=logging.INFO)
