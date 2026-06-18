@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 start_time = datetime.now()
 
 # ---------- FOOTER FOR ALL MESSAGES ----------
-FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : hii @AnonymousJxksh* ✨"
+FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : hi @AnonymousJxksh* ✨"
 
 # ---------- YOUR ORIGINAL FUNCTIONS (COMPLETELY UNCHANGED) ----------
 def h1():
@@ -423,41 +423,17 @@ flask_app = Flask(__name__)
 def health():
     return "Bot is running"
 
-# ---------- START BOT WITH BETTER TIMEOUT & CONNECTIVITY HANDLING ----------
+# ---------- START BOT ----------
 def run_telegram_bot():
-    try:
-        print("🤖 Initializing Telegram bot with extended timeout...")
-        print("⏱️ If it takes long, check your internet or try a VPN")
-        
-        # Create app with significantly increased timeouts (30 seconds)
-        app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("help", help_command))
-        app.add_handler(CommandHandler("status", status))
-        app.add_handler(CommandHandler("chk", single_check))
-        app.add_handler(CommandHandler("mchk", multiple_check))
-        
-        print("✅ Telegram bot configured – starting polling...")
-        print("💡 Note: If timeout persists, Telegram API might be blocked in your region")
-        print("💡 Solution: Try running with a VPN or proxy\n")
-        
-        # Use stop_signals=() to disable signal handlers in background thread
-        app.run_polling(stop_signals=(), allowed_updates=None)
-        
-    except TimeoutError:
-        print("❌ Connection timeout to Telegram API")
-        print("🔧 Troubleshooting:")
-        print("   1. Check internet connection: ping 1.1.1.1")
-        print("   2. Try a VPN (Telegram might be blocked)")
-        print("   3. Verify BOT_TOKEN is correct")
-        print("   4. Wait and try again")
-    except Exception as e:
-        print(f"❌ Failed to start bot: {e}")
-        print("🔧 Troubleshooting steps:")
-        print("   1. Check internet connection")
-        print("   2. Try using a VPN")
-        print("   3. Verify BOT_TOKEN is valid")
-        print("   4. Restart after a few moments")
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("chk", single_check))
+    app.add_handler(CommandHandler("mchk", multiple_check))
+    print("🤖 Telegram bot started – polling...")
+    # Use stop_signals=() to disable signal handlers in background thread
+    app.run_polling(stop_signals=())
 
 if __name__ != '__main__':
     thread = threading.Thread(target=run_telegram_bot, daemon=True)
