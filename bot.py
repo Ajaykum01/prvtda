@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 start_time = datetime.now()
 
 # ---------- FOOTER FOR ALL MESSAGES ----------
-FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : @AnonymousJxksh* ✨"
+FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : hi @AnonymousJxksh* ✨"
 
 # ---------- YOUR ORIGINAL FUNCTIONS (COMPLETELY UNCHANGED) ----------
 def h1():
@@ -134,8 +134,10 @@ def login():
     s = requests.Session()
     r = s.get('https://livresq.com/en/my-account/', headers=h1())
     n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
-    if not n: return None
-    print("Login Nonce:", n.group(1))
+    if not n: 
+        print("❌ Login nonce not found in page")
+        return None
+    print("✅ Login Nonce:", n.group(1))
     d = {
         'username': EMAIL,
         'password': PASSWORD,
@@ -145,8 +147,18 @@ def login():
         'trp-form-language': 'en'
     }
     r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d)
+    
+    # DEBUG: Print response to see what's happening
+    print(f"Response status: {r.status_code}")
+    print(f"Response contains 'logout': {'logout' in r.text.lower()}")
+    print(f"Response contains 'dashboard': {'dashboard' in r.text.lower()}")
+    print(f"Response contains 'woocommerce-error': {'woocommerce-error' in r.text}")
+    
     if 'woocommerce-error' in r.text or not ('logout' in r.text.lower() or 'dashboard' in r.text.lower()):
+        print("❌ Login failed - check credentials or website structure")
         return None
+    
+    print("✅ Login successful")
     return s
 
 def get_nonces(s):
