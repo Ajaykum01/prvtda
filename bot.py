@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 start_time = datetime.now()
 
 # ---------- FOOTER FOR ALL MESSAGES ----------
-FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : hi @AnonymousJxksh* ✨"
+FOOTER = "\n\n━━━━━━━━━━━━━━━━\n✨ *Made By : hii @AnonymousJxksh* ✨"
 
 # ---------- YOUR ORIGINAL FUNCTIONS (COMPLETELY UNCHANGED) ----------
 def h1():
