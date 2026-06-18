@@ -14,8 +14,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
 
 # ---------- HARDCODED CONFIG ----------
-EMAIL = "00t0a9@givememail.club"
-PASSWORD = "Lundka143"
+EMAIL = "latoh66921@aratrin.com"
+PASSWORD = "Ajaykumar@28"
 BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"   # <-- Replace with your bot token
 
 logging.basicConfig(level=logging.INFO)
