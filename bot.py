@@ -12,11 +12,15 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
+import os
 
 # ---------- HARDCODED CONFIG ----------
-EMAIL = "latoh66921@aratrin.com"
-PASSWORD = "Ajaykumar@28"
-BOT_TOKEN = "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM"   # <-- Replace with your bot token
+# IMPORTANT: Use valid credentials from a real livresq.com account
+# Option 1: Set environment variables: LIVRESQ_EMAIL, LIVRESQ_PASSWORD, BOT_TOKEN
+# Option 2: Replace the default values below with your valid credentials
+EMAIL = os.getenv("LIVRESQ_EMAIL", "latoh66921@aratrin.com")
+PASSWORD = os.getenv("LIVRESQ_PASSWORD", "Ajaykumar@28")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7033106060:AAHXbgIlI7iMngcRw543ONGUvFzt-TTOvbM")
 
 logging.basicConfig(level=logging.INFO)
 start_time = datetime.now()
@@ -154,8 +158,16 @@ def login():
     print(f"Response contains 'dashboard': {'dashboard' in r.text.lower()}")
     print(f"Response contains 'woocommerce-error': {'woocommerce-error' in r.text}")
     
-    if 'woocommerce-error' in r.text or not ('logout' in r.text.lower() or 'dashboard' in r.text.lower()):
-        print("❌ Login failed - check credentials or website structure")
+    # Extract error message if login failed
+    if 'woocommerce-error' in r.text:
+        error_match = re.search(r'<ul class="woocommerce-error"[^>]*>.*?<li>(.*?)</li>', r.text, re.DOTALL)
+        if error_match:
+            error_msg = error_match.group(1).strip()
+            print(f"❌ Login error: {error_msg}")
+        return None
+    
+    if not ('logout' in r.text.lower() or 'dashboard' in r.text.lower()):
+        print("❌ Login failed - credentials invalid or account issue")
         return None
     
     print("✅ Login successful")
